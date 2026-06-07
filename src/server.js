@@ -509,7 +509,20 @@ function requireSetupAuth(req, res, next) {
 
 const app = express();
 app.disable("x-powered-by");
-app.use(express.json({ limit: "1mb" }));
+
+// /hooks (and any subpath) is proxied straight through to the gateway, which
+// needs the raw request body. Skip JSON parsing for those routes so http-proxy
+// can stream the body intact — otherwise express.json() consumes the request
+// stream and the proxied POST reaches the gateway with body headers but an
+// empty body, hanging the upstream ("socket hang up"). All other routes (the
+// wrapper's own /setup APIs) still get parsed JSON.
+const jsonParser = express.json({ limit: "1mb" });
+app.use((req, res, next) => {
+  if (req.path === "/hooks" || req.path.startsWith("/hooks/")) {
+    return next();
+  }
+  return jsonParser(req, res, next);
+});
 
 app.get("/styles.css", (_req, res) => {
   res.sendFile(path.join(process.cwd(), "src", "public", "styles.css"));

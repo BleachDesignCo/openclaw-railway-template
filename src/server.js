@@ -510,15 +510,19 @@ function requireSetupAuth(req, res, next) {
 const app = express();
 app.disable("x-powered-by");
 
-// /hooks (and any subpath) is proxied straight through to the gateway, which
-// needs the raw request body. Skip JSON parsing for those routes so http-proxy
-// can stream the body intact — otherwise express.json() consumes the request
-// stream and the proxied POST reaches the gateway with body headers but an
-// empty body, hanging the upstream ("socket hang up"). All other routes (the
-// wrapper's own /setup APIs) still get parsed JSON.
+// /hooks and /deck (and any subpath) are proxied straight through to the
+// gateway, which needs the raw request body. Skip JSON parsing for those
+// routes so http-proxy can stream the body intact — otherwise express.json()
+// consumes the request stream and the proxied POST reaches the gateway with
+// body headers but an empty body, hanging the upstream ("socket hang up").
+// /deck is the Daily Dashboard's answering door (the deck-doorbell gateway
+// plugin), which also does its own auth. All other routes (the wrapper's own
+// /setup APIs) still get parsed JSON.
 const jsonParser = express.json({ limit: "1mb" });
+const isRawProxiedPath = (p) =>
+  p === "/hooks" || p.startsWith("/hooks/") || p === "/deck" || p.startsWith("/deck/");
 app.use((req, res, next) => {
-  if (req.path === "/hooks" || req.path.startsWith("/hooks/")) {
+  if (isRawProxiedPath(req.path)) {
     return next();
   }
   return jsonParser(req, res, next);
@@ -1760,7 +1764,9 @@ const PROXY_ORIGIN = process.env.RAILWAY_PUBLIC_DOMAIN
   : GATEWAY_TARGET;
 
 proxy.on("proxyReq", (proxyReq, req, res) => {
-  if (!req.url?.startsWith("/hooks/")) {
+  // /hooks and /deck carry their own dedicated secrets end to end — never
+  // overwrite their auth with the gateway token.
+  if (!req.url?.startsWith("/hooks/") && !req.url?.startsWith("/deck/")) {
     proxyReq.setHeader("Authorization", `Bearer ${OPENCLAW_GATEWAY_TOKEN}`);
   }
   proxyReq.setHeader("Origin", PROXY_ORIGIN);
